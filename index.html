@@ -2,52 +2,100 @@
 <html>
 <head>
     <meta charset="utf-8">
-    <title>Browser inference demo</title>
-
+    <title>Voice Jump Detection</title>
     <style>
-        #features {
-            width: 50%;
-            font-size: 18px;
-        }
-
-        #results {
-            font-family: monospace;
-            white-space: pre;
-        }
+        body { font-family: sans-serif; text-align: center; padding-top: 190px; }
+        button { font-size: 20px; padding: 12px 24px; margin-top: 10px; }
+        #result-text { font-size: 24px; font-weight: bold; color: #333; margin-top: 20px; }
     </style>
 </head>
 <body>
-    <h1></h1>
+    <!-- 1. 手机端可视化调试框 -->
+    <div id="debug-log" style="background: rgba(0,0,0,0.85); color: #00ff00; padding: 10px; font-family: monospace; font-size: 12px; position: fixed; top: 0; left: 0; width: 100%; z-index: 99999; max-height: 160px; overflow-y: auto; text-align: left;">
+      [系统日志] 页面已加载，请点击下方按钮启动麦克风...
+    </div>
 
-    <p>
-        <input type="text" id="features" placeholder="Paste your features here">
-    </p>
-    <p>
-        <button id="run-inference">Run inference</button>
-    </p>
-    <p id="results"></p>
+    <h1>声控跳跃检测</h1>
+    <!-- 移动端必须通过点击动作来开启音频上下文 -->
+    <button id="start-btn">开启麦克风识别</button>
+    <div id="result-text">等待启动...</div>
 
     <script src="edge-impulse-standalone.js"></script>
     <script src="run-impulse.js"></script>
+    
+    <!-- 2. 核心逻辑脚本 -->
     <script>
-        (async () => {
-            var classifier = new EdgeImpulseClassifier();
-            await classifier.init();
+        function log(msg) {
+            var logDiv = document.getElementById("debug-log");
+            if (logDiv) {
+                logDiv.innerHTML += "<br>> " + msg;
+                logDiv.scrollTop = logDiv.scrollHeight;
+            }
+        }
 
-            let project = classifier.getProjectInfo();
-            document.querySelector('h1').textContent = project.owner + ' / ' + project.name + ' (version ' + project.deploy_version + ')';
+        let classifier = new EdgeImpulseClassifier();
+        let isClassifying = false;
 
-            document.querySelector('#run-inference').onclick = () => {
-                try {
-                    let features = document.querySelector('#features').value.split(',').map(x => Number(x.trim()));
-                    let res = classifier.classify(features);
-                    document.querySelector('#results').textContent = JSON.stringify(res, null, 4);
-                }
-                catch (ex) {
-                    alert('Failed to classify: ' + (ex.message || ex.toString()));
-                }
-            };
-        })();
+        document.getElementById('start-btn').onclick = async () => {
+            if (isClassifying) return;
+            
+            try {
+                log("正在初始化 AI 模型...");
+                await classifier.init();
+                log("✅ 模型加载成功！");
+
+                log("请求麦克风权限中...");
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                log("✅ 麦克风已成功开启！");
+
+                document.getElementById('start-btn').style.display = 'none';
+                document.getElementById('result-text').textContent = "正在监听声音中...";
+                isClassifying = true;
+
+                // 配置 Web Audio API 进行实时采样识别
+                const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                const sampleRate = classifier.getProjectInfo().frequency; // 自动获取模型要求的采样率
+                const source = audioContext.createMediaStreamSource(stream);
+                const processor = audioContext.createScriptProcessor(2048, 1, 1);
+
+                let audioBuffer = [];
+                const requiredSamples = classifier.getProjectInfo().input_features_count;
+
+                processor.onaudioprocess = (e) => {
+                    const inputData = e.inputBuffer.getChannelData(0);
+                    for (let i = 0; i < inputData.length; i++) {
+                        audioBuffer.push(inputData[i]);
+                    }
+
+                    // 当收集足够音频长度时进行预测
+                    if (audioBuffer.length >= requiredSamples) {
+                        let features = audioBuffer.slice(0, requiredSamples);
+                        audioBuffer = audioBuffer.slice(requiredSamples / 2); // 滑动窗口
+
+                        let res = classifier.classify(features);
+                        
+                        // 遍历识别结果（假设你的标签名叫 "ah"）
+                        res.results.forEach(result => {
+                            if (result.label === 'ah' && result.value > 0.7) { // 置信度大于 0.7
+                                log("🎤 检测到喊叫 'ah'！发送跳跃指令");
+                                document.getElementById('result-text').textContent = "检测到: ah (跳跃!)";
+
+                                // 向 App Inventor 发送跳跃信号
+                                if (window.AppInventor) {
+                                    AppInventor.setWebViewString("jump");
+                                }
+                            }
+                        });
+                    }
+                };
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+            } catch (err) {
+                log("❌ 出错: " + err.name + " - " + err.message);
+            }
+        };
     </script>
 </body>
 </html>
