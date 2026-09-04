@@ -76,7 +76,7 @@
                         
                         // 遍历识别结果（假设你的标签名叫 "ah"）
                         res.results.forEach(result => {
-                            if (result.label === 'ah' && result.value > 0.7) { // 置信度大于 0.7
+                            if (result.label === 'vocal_ah' && result.value > 0.7) { // 置信度大于 0.7
                                 log("🎤 检测到喊叫 'ah'！发送跳跃指令");
                                 document.getElementById('result-text').textContent = "检测到: ah (跳跃!)";
 
